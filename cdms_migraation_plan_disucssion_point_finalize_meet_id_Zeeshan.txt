@@ -1,0 +1,454 @@
+
+=####################===step 1.-------------------- 
+###take the backup of dev instance schema only 
+--full compressed  dump----- 
+pg_dump -h 192.168.10.205 -p 5432 -U cregistry --dbname="Contractor_Registry3.0" -F c --verbose --no-owner --no-acl --blobs -f "D:/Contractor_Registry_full_script_11052025.dump" 
+---this work only plan formate syntex ><---- 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F p --verbose --no-owner --no-acl --blobs -p 5432 > "d:\Contractor_Registry_full_script_16092025.sql" 
+
+----final ------backup command----------------
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0"  --verbose -p 5432 --schema-only -Fc -f D:\Contractor_Registry_schema_only_01102025.dump
+--schema only restore command
+pg_restore -U postgres -d cdmsR -p 5432 --schema-only  --clean --if-exists --verbose D:\Contractor_Registry_schema_only_01102025.dump
+
+
+###----single table -backup and restore 
+--add encoding---
+pg_dump -h localhost -U postgres -d cdms3.0_latest   -t public.unknown_master_for_dba   --no-owner --no-privileges --encoding=UTF8   -f "D:\unknown_master_for_dba_dump.sql"
+psql -h localhost -U postgres -d cdmsR -f "D:\unknown_master_for_dba_dump.sql"
+---for powershell --
+
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -t public.t_cdm_issuing_authority   -t public.t_cdm_issuing_authority_final     --data-only   --column-inserts   -f D:\CDMS3_tables_backup.sql
+
+psql -U postgres -d cdmsdm3 -f D:\CDMS3_tables_backup.sql
+
+
+
+
+psql -h localhost -U postgres -d cdms3.0 -p 5433 -f "D:\unknown_master_for_dba_table_dump.sql"
+############===step 2.--------------
+list all master tables take a dump along with data 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0"  --verbose -t m_* --column-inserts --no-owner --no-acl  --no-privileges -p 5432 > "d:\master_tables_11092025.sql"
+
+
+
+---------for power shell .sql formate and 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" --verbose -t m_* --column-inserts --no-owner --no-acl --no-privileges -p 5432 --file="d:\master_tables_01102025.sql"
+---for .dump formate-with copy statements----------------
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" --verbose  -t 'public.m_*' -Fc --no-owner --no-acl -p 5432 -f "d:/master_tables_01102025.dump"  
+
+
+
+
+-____find the list of all fk relateion exit in tables----------------
+-----------------------find and generate add script on it -------------------------
+SELECT
+    conrelid::regclass AS transaction_table,
+    confrelid::regclass AS master_table,
+    conname AS constraint_name,
+    format(
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%s) REFERENCES %I (%s);',
+        conrelid::regclass,
+        conname,
+        string_agg(att2.attname, ', ' ORDER BY u.attnum),
+        confrelid::regclass,
+        string_agg(att1.attname, ', ' ORDER BY u.attnum)
+    ) AS add_fk_statement
+FROM pg_constraint c
+JOIN pg_class cls ON cls.oid = c.conrelid
+JOIN pg_namespace ns ON ns.oid = cls.relnamespace
+JOIN unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+    ON true
+JOIN pg_attribute att2
+    ON att2.attrelid = c.conrelid AND att2.attnum = u.attnum
+JOIN unnest(c.confkey) WITH ORDINALITY AS f(attnum, ord)
+    ON f.ord = u.ord
+JOIN pg_attribute att1
+    ON att1.attrelid = c.confrelid AND att1.attnum = f.attnum
+WHERE c.contype = 'f'
+  AND ns.nspname = 'public'
+  AND conrelid::regclass::text LIKE 't_%'
+  AND confrelid::regclass::text ~ '^(t_|m_)'
+  --AND confrelid::regclass::text LIKE 'm_%'
+  AND conrelid::regclass::text NOT LIKE 't_qc_%'
+  AND conrelid::regclass::text NOT LIKE 't_ps_aps_%'
+  AND conrelid::regclass::text NOT LIKE 't_meeting%'
+  AND conrelid::regclass::text NOT LIKE 't_nsc_%'
+  AND conrelid::regclass::text NOT LIKE '%_wip%'
+GROUP BY conrelid, confrelid, conname
+ORDER BY conrelid::regclass::text, conname;
+
+
+
+
+
+this master 
+after that drop existing master data drop the the table along with cascade 
+-----------script part--dynamiclly -------
+DO $$
+DECLARE
+    r RECORD;
+    dry_run BOOLEAN := true;  -- Set to false to actually drop tables
+BEGIN
+    FOR r IN
+        SELECT tablename
+        FROM pg_tables
+        WHERE tablename LIKE 'm_%'
+          AND tablename NOT LIKE 'm_qc_%'
+          AND tablename NOT LIKE 'm_ps_aps_%'
+          AND tablename NOT LIKE 'm_meeting%'
+    LOOP
+        IF dry_run THEN
+            RAISE NOTICE '[DRY RUN] Would drop: DROP TABLE IF EXISTS % CASCADE;', r.tablename;
+        ELSE
+            RAISE NOTICE 'Dropping table: %', r.tablename;
+            EXECUTE format('DROP TABLE IF EXISTS %I CASCADE;', r.tablename);
+        END IF;
+    END LOOP;
+END $$;
+--------------------------------another way -----------------------
+
+SELECT 'DROP TABLE IF EXISTS ' || tablename || ' CASCADE;'
+FROM pg_tables
+WHERE tablename LIKE 'm_%';
+
+
+
+----script end part -------------
+
+
+
+
+=============step 3. restore the master dump 
+
+psql -U postgres -d "cdms3.0_latest" --file="d:\master_tables_22092025.sql"
+--psql -U postgres -d "cdms_final" -f "d:\Contract_db_Daily_back\master_tables_19082025.sql"
+pg_restore -h localhost -U postgres -d cdms3.0 -p 5433     --verbose --no-owner --no-acl "d:/master_tables_01102025.dump"
+
+
+---after restore check the containts --of tables
+SELECT schemaname, relname AS tablename, n_tup_ins 
+FROM pg_stat_user_tables 
+WHERE schemaname = 'public' 
+ORDER BY relname;
+===========step 4. ================================================
+fdw or db link 
+before execution delete all foreign key 
+now execute table script one by one 
+-----------------------find and generate add script on it -------------------------
+SELECT
+    conrelid::regclass AS transaction_table,
+    confrelid::regclass AS master_table,
+    conname AS constraint_name,
+    format(
+        'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (%s) REFERENCES %I (%s);',
+        conrelid::regclass,
+        conname,
+        string_agg(att2.attname, ', ' ORDER BY u.attnum),
+        confrelid::regclass,
+        string_agg(att1.attname, ', ' ORDER BY u.attnum)
+    ) AS add_fk_statement
+FROM pg_constraint c
+JOIN pg_class cls ON cls.oid = c.conrelid
+JOIN pg_namespace ns ON ns.oid = cls.relnamespace
+JOIN unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+    ON true
+JOIN pg_attribute att2
+    ON att2.attrelid = c.conrelid AND att2.attnum = u.attnum
+JOIN unnest(c.confkey) WITH ORDINALITY AS f(attnum, ord)
+    ON f.ord = u.ord
+JOIN pg_attribute att1
+    ON att1.attrelid = c.confrelid AND att1.attnum = f.attnum
+WHERE c.contype = 'f'
+  AND ns.nspname = 'public'
+  AND conrelid::regclass::text LIKE 't_%'
+  AND confrelid::regclass::text ~ '^(t_|m_)'
+  --AND confrelid::regclass::text LIKE 'm_%'
+  AND conrelid::regclass::text NOT LIKE 't_qc_%'
+  AND conrelid::regclass::text NOT LIKE 't_ps_aps_%'
+  AND conrelid::regclass::text NOT LIKE 't_meeting%'
+  AND conrelid::regclass::text NOT LIKE 't_nsc_%'
+GROUP BY conrelid, confrelid, conname
+ORDER BY conrelid::regclass::text, conname;
+
+
+
+
+-----drop script--------------------for all transection tables   disables-------------------
+
+SELECT
+    conrelid::regclass AS transaction_table,
+    conname AS constraint_name,
+    format(
+        'ALTER TABLE %I DROP CONSTRAINT %I;',
+        conrelid::regclass,
+        conname
+    ) AS drop_fk_statement
+FROM pg_constraint c
+JOIN pg_class cls ON cls.oid = c.conrelid
+JOIN pg_namespace ns ON ns.oid = cls.relnamespace
+WHERE c.contype = 'f'
+  AND ns.nspname = 'public'
+  AND conrelid::regclass::text LIKE 't_%'
+  AND confrelid::regclass::text ~ '^(t_|m_)'
+  AND conrelid::regclass::text NOT LIKE 't_qc_%'
+  AND conrelid::regclass::text NOT LIKE 't_ps_aps_%'
+  AND conrelid::regclass::text NOT LIKE 't_meeting%'
+  AND conrelid::regclass::text NOT LIKE 't_nsc_%' 
+    AND conrelid::regclass::text NOT LIKE '%_wip%'
+ORDER BY conrelid::regclass::text, conname;
+
+
+
+--------============DB link fdw================-------------
+
+CREATE EXTENSION postgres_fdw;
+
+--drop server cdms2_0_server cascade
+CREATE SERVER cdms2_0_server FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host '192.168.203.141', dbname 'cdmsdb', port '5432');
+
+
+
+
+
+CREATE USER MAPPING FOR current_user
+SERVER cdms2_0_server OPTIONS (user 'cdms', password 'Csmpl@1234');
+
+--IMPORT FOREIGN SCHEMA public
+--LIMIT TO (t_cdms_li_user)
+--FROM SERVER cdms2_0_server INTO public;
+
+--create schema for cdms2
+CREATE SCHEMA cdms2;
+IMPORT FOREIGN SCHEMA public
+FROM SERVER cdms2_0_server
+INTO cdms2;
+-------------------------------end foreingn data link---------------  
+
+
+
+
+====================step 5.execute the foreign key all the relation============================= 
+
+
+Note:---------identify the data reduance duplicate data to identify unique different data 
+in master foreign key giving the problem
+insert a new data in respective   master data in master table 9999 
+same script execute data will go  update all discripency data 
+--update the all the discripncy data 
+--unkonwn master table for every unknow master data 99999 every tables 
+--circle id is null in existing transection
+
+Note :- master tables finalize send to development team to varify  
+---check the schema wise filter to find the table name
+select  * from Information_schema.columns where table_name like '%desig%' and table_schema='public'
+#######note:--master table if filter then first tabke the table copy then remove the anomolies 
+###create table for unknown master table for data
+
+CREATE TABLE public.unknown_master_for_dba ( sr_no bigserial NOT NULL, table_name varchar(255) NOT NULL,
+table_column text NOT NULL,
+unknown_code int8 NULL, 
+updated_date timestamp DEFAULT now() NULL,
+raw_value text NULL,
+status text DEFAULT 'unresolved'::text NULL,
+CONSTRAINT unique_unknown_code UNIQUE (unknown_code),
+CONSTRAINT unique_unknown_context UNIQUE (table_name, table_column, unknown_code), 
+CONSTRAINT unknown_master_for_dba_pkey PRIMARY KEY (sr_no));
+---generate data for this type--------------------
+sr. table name          table_column    table    code fro migraion to nullify the duplicate and anomiltity 
+1. t_cdms_desgintaion  designtaion_id designation   555555 
+
+
+
+note ---- this type error mostly come that like any table which is master and not mapped with the another transection tables
+ERROR:  insert or update on table "t_cdms_li_basic_information_license_final" violates foreign key constraint "fk_license_final_to_main"
+Key (basic_information_license_id)=(62444) is not present in table "t_cdms_li_basic_information_license". 
+
+SQL state: 23503
+Detail: Key (basic_information_license_id)=(62444) is not present in table "t_cdms_li_basic_information_license".
+---------------------check thie trigger is exist-------------------
+SELECT format('DROP TRIGGER IF EXISTS %I ON %I.%I;',
+              trigger_name, event_object_schema, event_object_table)
+FROM information_schema.triggers
+WHERE trigger_name LIKE 'trg_%';
+
+===============check the redunaceny using this steps and update the transection tables ==================
+select * from t_cdms_li_address;
+select * from m_cdms_address_proof_type
+select * from t_cdms_li_address a ,
+m_cdms_address_proof_type b where a.pr_address_proof_id=b.address_proof_id; 1401
+ transection table --22891
+
+update t_cdms_li_address set pr_address_proof_id=99999 
+where pr_address_proof_id in (select a.pr_address_proof_id from t_cdms_li_address a where not exists 
+(select 1 from m_cdms_address_proof_type b where a.pr_address_proof_id=b.address_proof_id))
+
+select a.pr_address_proof_id from t_cdms_li_address a where not exists (select 1 from m_cdms_address_proof_type b where a.pr_address_proof_id=b.address_proof_id)
+
+-------------------------check the sequence of all tables and which is mapped with pk and sequence name also get it ----------------------
+
+SELECT
+    c.table_schema,
+    c.table_name,
+    c.column_name,
+    c.data_type,
+    c.column_default,
+    CASE
+        WHEN c.column_default LIKE 'nextval(%' THEN 'Yes'
+        ELSE 'No'
+    END AS uses_sequence
+FROM information_schema.columns c
+WHERE c.table_schema = 'public'
+  AND c.column_default LIKE 'nextval(%'
+ORDER BY c.table_name, c.ordinal_position;
+-------------------------this script generate reset sequence on it and apply all the tables after migration---------------------
+SELECT
+    c.table_schema,
+    c.table_name,
+    c.column_name,
+    c.data_type,
+    c.column_default,
+    CASE
+        WHEN c.column_default LIKE 'nextval(%' THEN 'Yes'
+        ELSE 'No'
+    END AS uses_sequence,
+    regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') AS sequence_name,
+    'SELECT setval(''' ||
+        regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') ||
+        ''', COALESCE(MAX(' || c.column_name || '), 0) + 1, false) FROM ' ||
+        c.table_schema || '.' || c.table_name || ';' AS reset_script
+FROM information_schema.columns c
+WHERE c.table_schema = 'public'
+  AND c.column_default LIKE 'nextval(%'
+  AND c.data_type IN ('integer', 'bigint')
+ORDER BY c.table_name, c.ordinal_position;
+
+
+
+
+
+
+----modfied script to check the reset script and validate the sequence reset or not with this script-------------------
+SELECT
+    c.table_schema,
+    c.table_name,
+    c.column_name,
+    c.data_type,
+    c.column_default,
+    CASE
+        WHEN c.column_default LIKE 'nextval(%' THEN 'Yes'
+        ELSE 'No'
+    END AS uses_sequence,
+    regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') AS sequence_name,
+    s.last_value AS current_seq_value,
+    'SELECT setval(''' ||
+        regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') ||
+        ''', COALESCE(MAX(' || c.column_name || '), 0) + 1, false) FROM ' ||
+        c.table_schema || '.' || c.table_name || ';' AS reset_script,
+    -- Validation query to check if sequence is properly set
+    'SELECT ''' || c.table_name || ''' as table_name, ' ||
+    'COALESCE(MAX(' || c.column_name || '), 0) as table_max, ' ||
+    '(SELECT last_value FROM pg_sequences WHERE sequencename = ''' || 
+    regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') || 
+    ''') as seq_value, ' ||
+    'CASE WHEN (SELECT last_value FROM pg_sequences WHERE sequencename = ''' || 
+    regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1') || 
+    ''') > COALESCE(MAX(' || c.column_name || '), 0) THEN ''OK'' ELSE ''NEEDS_RESET'' END as status ' ||
+    'FROM ' || c.table_schema || '.' || c.table_name || ';' AS validation_query
+FROM information_schema.columns c
+LEFT JOIN pg_sequences s ON s.sequencename = regexp_replace(c.column_default, '^nextval\(''(.*)''::regclass\)', '\1')
+    AND s.schemaname = c.table_schema
+WHERE c.table_schema = 'public'
+  AND c.column_default LIKE 'nextval(%'
+  AND c.data_type IN ('integer', 'bigint')
+ORDER BY c.table_name, c.ordinal_position;
+
+
+
+
+ 
+--------------------auto genearet insert script given table name and id  for unknown master audit tables---------------
+
+SELECT
+    sr_no,
+    table_name,
+    table_column,
+    unknown_code,
+    raw_value,
+    status,
+    format(
+        'INSERT INTO %I (%I, name) VALUES (%L, %L);',
+        table_name,
+        table_column,
+        unknown_code,
+        raw_value
+    ) AS insert_script
+FROM unknown_master_for_dba
+WHERE status = 'unresolved';
+----modified script which generate auto insert script every column on the basis of unknown master tables------------------ 
+WITH unresolved AS (
+    SELECT table_name, table_column AS pk_column, unknown_code, raw_value,status
+    FROM unknown_master_for_dba
+    WHERE status = 'unresolved'
+),
+column_metadata AS (
+    SELECT
+        c.table_name,
+        c.column_name,
+        c.data_type
+    FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+),
+resolved AS (
+    SELECT
+        u.table_name,
+        u.pk_column,
+        u.unknown_code,
+        u.raw_value,
+        array_agg(format('%I', c.column_name)) AS col_list,
+        array_agg(
+            CASE
+                WHEN c.column_name = u.pk_column THEN quote_literal(u.unknown_code) || '::' || c.data_type
+                WHEN c.column_name = 'circle_id' THEN '878787'
+                WHEN c.column_name = 'dept_id' THEN '888888'
+                WHEN c.column_name = 'wing_id' THEN '101010'
+                WHEN c.column_name = 'category_id' THEN '333333'
+                WHEN c.column_name = 'state_id' THEN '666666'
+                WHEN c.column_name = 'district_id' THEN '555555'
+                WHEN c.column_name = 'gp_id' THEN '546546'
+                WHEN c.column_name = 'block_id' THEN '444444'
+                WHEN c.data_type IN ('character varying', 'text') THEN '''UNKNOWN'''
+                WHEN c.data_type IN ('boolean') THEN 'TRUE'
+                WHEN c.data_type IN ('integer', 'bigint') THEN '0'
+                WHEN c.data_type LIKE 'timestamp%' THEN 'NOW()'
+                ELSE 'NULL'
+            END
+        ) AS val_list
+    FROM unresolved u
+    JOIN column_metadata c ON u.table_name = c.table_name
+    GROUP BY u.table_name, u.pk_column, u.unknown_code, u.raw_value
+),
+final AS (
+    SELECT
+        table_name,
+        pk_column,
+        unknown_code,
+        raw_value,
+        format(
+            'INSERT INTO %I (%s) VALUES (%s);',
+            table_name,
+            array_to_string(col_list, ', '),
+            array_to_string(val_list, ', ')
+        ) AS insert_script
+    FROM resolved
+)
+SELECT * FROM final;
+
+
+
+------check status all should be unresolved status---------------
+select * from unknown_master_for_dba
+update unknown_master_for_dba set status='unresolved'
+-------------------end---------------------------------------
+--
