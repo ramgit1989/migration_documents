@@ -1,0 +1,11 @@
+
+SELECT pg_current_wal_lsn();
+
+
+SELECT pg_walfile_name('26/E2000168');
+
+
+pg_archivecleanup.exe "D:\archivedir" 0000000100000026000000E4 >> "D:\archivedir\cleanup_log.txt" 2>&1
+
+
+ SELECT pg_switch_wal();

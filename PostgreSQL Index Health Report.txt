@@ -1,0 +1,49 @@
+-- Ensure pgstattuple is available (needed for density/fragmentation checks)
+CREATE EXTENSION IF NOT EXISTS pgstattuple;
+
+WITH index_usage AS (
+    SELECT
+        n.nspname AS schema_name,
+        c.relname AS table_name,
+        i.relname AS index_name,
+        pg_relation_size(i.oid) AS index_bytes,
+        pg_size_pretty(pg_relation_size(i.oid)) AS index_size,
+        s.idx_scan AS scans,
+        s.idx_tup_read AS tuples_read,
+        s.idx_tup_fetch AS tuples_fetched
+    FROM pg_class c
+    JOIN pg_index x ON c.oid = x.indrelid
+    JOIN pg_class i ON i.oid = x.indexrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_stat_all_indexes s ON s.indexrelid = i.oid
+    WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+      AND c.relkind = 'r'  -- only regular tables
+),
+index_health AS (
+    SELECT
+        indexrelid::regclass AS index_name,
+        (pgstatindex(indexrelid)).avg_leaf_density AS leaf_density,
+        (pgstatindex(indexrelid)).leaf_fragmentation AS fragmentation
+    FROM pg_index
+    JOIN pg_class ON pg_class.oid = pg_index.indexrelid
+    WHERE pg_class.relkind = 'i'
+)
+SELECT
+    u.schema_name,
+    u.table_name,
+    u.index_name,
+    u.index_size,
+    u.scans,
+    u.tuples_read,
+    u.tuples_fetched,
+    h.leaf_density,
+    h.fragmentation,
+    CASE
+        WHEN u.scans = 0 THEN '⚠️ Unused (since last stats reset)'
+        WHEN h.leaf_density < 60 THEN '⚠️ Low density (possible bloat)'
+        WHEN h.fragmentation > 20 THEN '⚠️ High fragmentation'
+        ELSE '🟢 Healthy'
+    END AS health_status
+FROM index_usage u
+LEFT JOIN index_health h ON u.index_name = h.index_name::text
+ORDER BY u.index_bytes DESC;

@@ -1,0 +1,73 @@
+SELECT * from pg_catalog.pg_read_file('pg_hba.conf');-- check the without go the inside data directory read all parameters 
+---monitoring script---s
+
+
+SELECT datname, oid FROM pg_database WHERE datname = 'sampledb';
+
+
+SELECT
+    d.datname,
+    d.oid,
+    pg_size_pretty(pg_database_size(d.datname)) AS db_size
+FROM pg_database d
+ORDER BY pg_database_size(d.datname) DESC;
+
+
+
+SHOW shared_buffers; --128mb
+SHOW effective_cache_size;--4GB
+SHOW work_mem; --4mb
+
+-- Database size and performance overview (fixed ROUND function)
+SELECT
+    d.datname,
+    d.oid,
+    pg_size_pretty(pg_database_size(d.datname)) AS db_size,
+    pg_database_size(d.datname) AS size_bytes,
+    numbackends AS active_connections,
+    xact_commit AS transactions_committed,
+    xact_rollback AS transactions_rolled_back,
+    ROUND((xact_commit::numeric / NULLIF(xact_commit + xact_rollback, 0)) * 100, 2) AS commit_ratio_pct,
+    blks_read AS disk_blocks_read,
+    blks_hit AS cache_blocks_hit,
+    ROUND((blks_hit::numeric / NULLIF(blks_hit + blks_read, 0)) * 100, 2) AS cache_hit_ratio_pct,
+    tup_returned AS tuples_returned,
+    tup_fetched AS tuples_fetched,
+    tup_inserted AS tuples_inserted,
+    tup_updated AS tuples_updated,
+    tup_deleted AS tuples_deleted,
+    temp_files AS temp_files_created,
+    pg_size_pretty(temp_bytes) AS temp_files_size
+FROM pg_database d
+LEFT JOIN pg_stat_database s ON d.datname = s.datname
+WHERE d.datallowconn = true
+ORDER BY pg_database_size(d.datname) DESC;
+
+-- Active connections and queries
+SELECT 
+    datname,
+    COUNT(*) AS total_connections,
+    COUNT(*) FILTER (WHERE state = 'active') AS active_queries,
+    COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections,
+    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_transaction
+FROM pg_stat_activity 
+WHERE datname IS NOT NULL
+GROUP BY datname
+ORDER BY total_connections DESC;
+
+-- Top 10 largest tables
+SELECT 
+    schemaname,
+    relname AS tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname)) AS total_size,
+    pg_size_pretty(pg_relation_size(schemaname||'.'||relname)) AS table_size,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname) - pg_relation_size(schemaname||'.'||relname)) AS index_size,
+    n_tup_ins AS inserts,
+    n_tup_upd AS updates,
+    n_tup_del AS deletes,
+    seq_scan AS sequential_scans,
+    idx_scan AS index_scans
+FROM pg_stat_user_tables 
+ORDER BY pg_total_relation_size(schemaname||'.'||relname) DESC 
+LIMIT 10;
+

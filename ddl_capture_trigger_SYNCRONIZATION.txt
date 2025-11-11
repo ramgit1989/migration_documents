@@ -1,0 +1,59 @@
++++++create ddl trigger for capture 
+
+-----------create table 
+CREATE TABLE ddl_audit_log (
+  id SERIAL PRIMARY KEY,
+  command_tag TEXT,
+  object_type TEXT,
+  object_identity TEXT,
+  ddl_sql TEXT,
+  executed_at TIMESTAMP DEFAULT now()
+);
+
+
+
+CREATE OR REPLACE FUNCTION log_ddl_changes() RETURNS event_trigger AS $$
+BEGIN
+  INSERT INTO ddl_audit_log(command_tag, object_type, object_identity, ddl_sql)
+  SELECT
+    command_tag,
+    object_type,
+    object_identity,
+    current_query()
+  FROM pg_event_trigger_ddl_commands();
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE EVENT TRIGGER ddl_logger ON ddl_command_end
+EXECUTE FUNCTION log_ddl_changes();
+
+---select * from information_Schema.tables where table_name='ddl_audit_log'
+---select * from information_Schema.columns where table_name='ddl_audit_log'
+-----alter table cdms_table_list add column status boolean default true; 
+
+
+
+----using pg_Admin-----------------
+COPY (
+  SELECT ddl_sql
+  FROM ddl_audit_log
+  WHERE executed_at > now() - interval '1 day'
+) TO 'D:\ddl_changes.sql'
+
+
+
+
+for client side using psql 
+\copy (
+  SELECT ddl_sql
+  FROM ddl_audit_log
+  WHERE executed_at > now() - interval '1 day'
+) TO 'D:\ddl_changes.sql' WITH CSV
+
+-------using psql --------------
+
+psql -U postgres -d cdmsR -c "COPY (SELECT ddl_sql FROM ddl_audit_log WHERE executed_at > now() - interval '1 day') TO STDOUT" > ddl_changes.sql
+
+
+---open ddl changes in postgres or any gui tools
+

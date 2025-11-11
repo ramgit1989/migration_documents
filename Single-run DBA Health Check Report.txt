@@ -1,0 +1,167 @@
+-- ==============================================
+-- PostgreSQL Manual Monitoring Script
+-- Author : Ram Krishan Mishra (adapted)
+-- Purpose: Single-run DBA Health Check Report
+-- Compatible with pgAdmin (no \echo)
+-- ==============================================
+
+-- 1. Backend Sessions (Active / Idle / Idle in Tx)
+-- -----------------------------------------------
+SELECT datname,
+       usename,
+       application_name,
+       state,
+       COUNT(*) AS total_backends,
+       COALESCE(EXTRACT(EPOCH FROM (max(now() - xact_start))), 0) AS max_tx_duration_secs
+FROM pg_stat_activity
+WHERE state IS NOT NULL
+GROUP BY datname, usename, application_name, state
+ORDER BY total_backends DESC;
+
+-- 2. Blocked Queries (Lock Waits)
+-- -------------------------------
+SELECT bl.pid AS blocked_pid,
+       a.usename AS blocked_user,
+       ka.query AS blocking_query,
+       now() - ka.query_start AS blocking_duration,
+       kl.pid AS blocking_pid,
+       ka.usename AS blocking_user,
+       a.query AS blocked_query,
+       now() - a.query_start AS blocked_duration
+FROM pg_catalog.pg_locks bl
+JOIN pg_catalog.pg_stat_activity a ON a.pid = bl.pid
+JOIN pg_catalog.pg_locks kl ON kl.transactionid = bl.transactionid AND kl.pid != bl.pid
+JOIN pg_catalog.pg_stat_activity ka ON ka.pid = kl.pid
+WHERE NOT bl.granted;
+
+-- 3. Database Size & Transaction Age
+-- ----------------------------------
+SELECT datname,
+       pg_size_pretty(pg_database_size(datname)) AS size,
+       age(datfrozenxid) AS xid_age,
+       mxid_age(datminmxid) AS mxid_age
+FROM pg_database
+WHERE datallowconn
+ORDER BY pg_database_size(datname) DESC;
+
+-- 4. Postmaster Uptime
+-- --------------------
+SELECT pg_postmaster_start_time() AS postgres_start_time;
+
+-- 5. Replication Lag (Primary / Standby)
+-- --------------------------------------
+SELECT CASE 
+         WHEN NOT pg_is_in_recovery()
+              OR pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()
+         THEN 0
+         ELSE GREATEST(0, EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())))
+       END AS lag_seconds,
+       pg_is_in_recovery() AS in_recovery,
+       EXISTS (SELECT 1 FROM pg_stat_wal_receiver) AS is_wal_receiver_up,
+       (SELECT COUNT(*) FROM pg_stat_replication) AS streaming_replicas;
+
+-- 6. Replication Slots
+-- --------------------
+SELECT slot_name,
+       slot_type,
+       database,
+       active,
+       (CASE pg_is_in_recovery()
+         WHEN TRUE THEN pg_wal_lsn_diff(pg_last_wal_receive_lsn(), restart_lsn)
+         ELSE pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)
+       END) AS replication_lag_bytes
+FROM pg_replication_slots
+WHERE NOT temporary;
+
+-- 7. WAL Archiver Statistics
+-- --------------------------
+SELECT archived_count,
+       failed_count,
+       COALESCE(EXTRACT(EPOCH FROM (now() - last_archived_time)), -1) AS seconds_since_last_archival,
+       COALESCE(EXTRACT(EPOCH FROM (now() - last_failed_time)), -1) AS seconds_since_last_failure,
+       last_archived_time,
+       last_failed_time
+FROM pg_stat_archiver;
+
+-- 8. Background Writer (for PostgreSQL < 17)
+-- ------------------------------------------
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'pg_stat_bgwriter') THEN
+    RAISE NOTICE 'Showing pg_stat_bgwriter (v16 and below)';
+  END IF;
+END$$;
+
+SELECT * FROM pg_stat_bgwriter;
+
+-- 9. Checkpointer (for PostgreSQL >= 17)
+-- --------------------------------------
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'pg_stat_checkpointer') THEN
+    RAISE NOTICE 'Showing pg_stat_checkpointer (v17+)';
+  END IF;
+END$$;
+
+SELECT * FROM pg_stat_checkpointer;
+
+-- 10. Database-level Statistics
+-- -----------------------------
+SELECT datname,
+       xact_commit,
+       xact_rollback,
+       blks_read,
+       blks_hit,
+       tup_returned,
+       tup_fetched,
+       tup_inserted,
+       tup_updated,
+       tup_deleted,
+       conflicts,
+       temp_files,
+       pg_size_pretty(temp_bytes) AS temp_bytes,
+       deadlocks,
+       blk_read_time,
+       blk_write_time
+FROM pg_stat_database
+ORDER BY datname;
+
+-- 11. Replication Clients (Standbys)
+-- ----------------------------------
+SELECT usename,
+       application_name,
+       client_addr,
+       client_port,
+       backend_start,
+       age(backend_xmin) AS backend_xmin_age,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)   AS sent_diff_bytes,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), write_lsn)  AS write_diff_bytes,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), flush_lsn)  AS flush_diff_bytes,
+       pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS replay_diff_bytes,
+       write_lag,
+       flush_lag,
+       replay_lag
+FROM pg_stat_replication;
+
+-- 12. Important Settings Overview
+-- -------------------------------
+SELECT name,
+       setting,
+       unit,
+       context,
+       vartype,
+       source
+FROM pg_settings
+WHERE vartype IN ('integer','real','bool')
+ORDER BY name;
+
+-- 13. Installed Extensions
+-- ------------------------
+SELECT current_database() AS datname,
+       name AS extension,
+       default_version,
+       installed_version,
+       CASE WHEN default_version = installed_version THEN 'Up-to-date'
+            ELSE 'Upgrade Available' END AS status
+FROM pg_available_extensions
+WHERE installed_version IS NOT NULL;
