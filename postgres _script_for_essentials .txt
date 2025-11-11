@@ -1,0 +1,193 @@
+####postgres starting script 
+
+If you installed PostgreSQL via download page postgres community:
+
+####To start manually:
+/user/postgres/bin/pg_ctl -D /usr/local/var/postgres start
+### to check postgresql service status manually 
+/user/postgres/bin/pg_ctl -D /usr/local/var/postgres status
+####To stop manually:
+
+/user/postgres/bin/pg_ctl -D /usr/local/var/postgres stop
+###To start PostgreSQL server now and relaunch at login:
+ services start postgresql
+####And stop PostgreSQL:
+ services stop postgresql
+
+
+###PSQL commands:
+
+    \?: show all psql commands.
+    \h sql-command: show syntax on SQL command.
+    \c dbname [username]: Connect to database, with an optional username (or \connect).
+    Display Commands: You can append + to show more details.
+    \l: List all database (or \list).
+    \d: Display all tables, indexes, views, and sequences.
+    \dt: Display all tables.
+    \di: Display all indexes.
+    \dv: Display all views.
+    \ds: Display all sequences.
+    \dT: Display all types.
+    \dS: Display all system tables.
+    \du: Display all users.
+    \x auto|on|off: Toggle|On|Off expanded output mode.
+
+###Login
+
+sudo -u postgres psql
+
+psql -U testuser testdb
+
+###Create User
+
+sudo -u postgres createuser <name>
+
+###Select Database on Login
+
+sudo -u username psql dbname
+
+###Show Databases:
+
+\l
+
+###Select Database:
+
+\c <dbname>    
+
+###List tables
+
+\dt
+
+###List Database Users
+
+\du
+
+###Show table structure
+
+\d tablename
+
+###To exit Postgresql
+
+exit
+
+##Set postgres Password
+
+By default, there is no password assigned to the Postgres user. For security reasons, it is a good idea to set a strong password for the Postgres user.
+
+First, log in to PostgreSQL with the following command.
+
+su - postgres
+
+###Once logged in, set a password to Postgres user.
+
+psql -c "alter user postgres with password 'securepassword'"
+
+Finally, exit from the Postgres Shell with the following command.
+Connect to a Database
+
+####To begin, we connect to a database using the psql command, specifying the username and database name:
+
+psql -U username -d dbname
+
+Replace username with your PostgreSQL username and dbname with the desired database name.
+Database Operations
+
+###Create a Database. This command establishes a new database named dbname.
+
+CREATE DATABASE dbname;
+
+###Delete a Database
+
+DROP DATABASE dbname;
+
+note---This command permanently removes a specified database.
+##Table Operations
+
+###Create a table .
+
+CREATE TABLE tablename (
+  column1 datatype1,
+  column2 datatype2,
+  ...
+);
+
+###Data Manipulation
+
+###Insert Data.
+
+INSERT INTO tablename (column1, column2) VALUES (value1, value2);
+
+##This command inserts new data into specified columns of a table.
+Update Data
+
+UPDATE tablename SET column = value WHERE condition;
+
+###Use this command to update existing data based on a specified condition.
+Delete Data
+
+DELETE FROM tablename WHERE condition;
+
+###This command removes data from a table based on specified criteria.
+
+###Configure PostgreSQL for Remote Access
+
+###By default, PostgreSQL is accessible only from the local system. You can allow remote access by editing the PostgreSQL configuration file.
+
+nano /var/lib/pgsql/data/postgresql.conf
+
+Change the line listen_addresses='*' . and then find the following line.
+
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            ident
+# IPv6 local connections:
+host    all             all             ::1/128                 ident
+
+Replace them with the
+
+# Accept from anywhere
+host all all 0.0.0.0/0 md5
+
+Or just change the ident to md5.
+
+    ident: Relies on OS user identity, less secure.
+    md5: Uses encrypted passwords, more secure.
+
+Restaring the postgresql service systemctl restart postgresql
+
+###Commonly used postgresql datatypes:
+
+    INT, SMALLINT: whole number. There is no UNSIGNED attribute in PostgreSQL.
+    SERIAL: auto-increment integer (AUTO_INCREMENT in MySQL).
+    REAL, DOUBLE: single and double precision floating-point number.
+    CHAR(n) and VARCHAR(n): fixed-length string of n characters and variable-length string of up to n characters. String literals are enclosed by single quotes, e.g., 'Peter', 'Hello, world'.
+    NUMERIC(m,n): decimal number with m total digits and n decimal places (DECIMAL(m,n) in MySQL).
+    DATE, TIME, TIMESTAMP, INTERVAL: date and time.
+    User-defined types.
+    NULL: A special value indicates unknown value or no value (of an optional field), which is different from 0 and empty string (that represent known value of 0 and empty string). To test for NULL value, use operator IS NULL or IS NOT NULL (e.g., email IS NULL). Comparing two NULLs with = or != results in unknown.
+
+At last, Here are a few less commonly known and potentially advanced PostgreSQL commands:
+
+###COPY command with Programmatic Data Loading:
+
+    Description: COPY is often used for bulk data loading, but it can also execute a program to generate the data to be loaded.
+    Usage: COPY table_name FROM PROGRAM 'generator_program'.
+
+###pg_trgm Extension for Trigram Matching:
+
+    Description: The pg_trgm extension provides trigram-based similarity measurement for text columns.
+    Usage: CREATE EXTENSION pg_trgm; and then utilize functions like similarity() for similarity comparisons.
+
+##pg_stat_statements for SQL Query Profiling:
+
+    Description: pg_stat_statements is a module that records normalized queries and their execution statistics.
+    Usage: After enabling, query statistics can be queried using SELECT * FROM pg_stat_statements;.
+
+##TABLESAMPLE for Random Sampling:
+
+    Description: TABLESAMPLE allows you to select a random sample of rows from a table.
+    Usage: SELECT * FROM table TABLESAMPLE BERNOULLI(10); to get a 10% random sample.
+
+RETURNING Clause with INSERT, UPDATE, and DELETE:
+
+    Description: The RETURNING clause allows you to return values generated by an INSERT, UPDATE, or DELETE command.
+    Usage: INSERT INTO table_name ... RETURNING column_name;.

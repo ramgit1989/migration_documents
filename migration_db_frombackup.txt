@@ -1,0 +1,237 @@
+#############################existing server details
+Server IP Address, both existing and new – (Existing GIS DB IP:- 10.10.77.226)
+·         Server Credentials (SSH/Remote Access) – (UID:- administrator/ PWD_ vfdTbG3^bgQ)
+·         Server Infrastructure Location (On-premise/Cloud – with provider details)- ESDS Cloud
+·         PostgreSQL Existing Credentials (Username, DB Name, Port, etc.) – UID:- postgres/PWD- post@789
+
+sadashiv.lokhande
+HTy8ycnP
+
+pg_dump -h 10.10.77.226 -U postgres -d dbname -F c -verbose -p 5432 -f backup.dump
+pg_dump -U postgres -h localhost -p 5432 -F c -b -v -f "db_backup.backup" auric
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F c -verbose -p 5432 -f backup.dump
+
+postgres=# show data_directory;
+            data_directory
+--------------------------------------
+ C:/Program Files/PostgreSQL/9.5/data
+(1 row)
+
+
+postgres=# show hba_files;
+ERROR:  unrecognized configuration parameter "hba_files"
+postgres=# show hba_file;
+                     hba_file
+--------------------------------------------------
+ C:/Program Files/PostgreSQL/9.5/data/pg_hba.conf
+(1 row)
+
+
+postgres=# select version();
+                           version
+-------------------------------------------------------------
+ PostgreSQL 9.5.1, compiled by Visual C++ build 1800, 64-bit
+(1 row)
+
+
+
+
+ALTER DATABASE auric
+  SET search_path = "$user", public, topology, sde;
+  
+  
+  
+  -- Extension: address_standardizer
+
+-- DROP EXTENSION address_standardizer;
+
+ CREATE EXTENSION address_standardizer
+  SCHEMA public
+  VERSION "2.3.7";
+  
+  
+ CREATE EXTENSION pgrouting
+  SCHEMA public
+  VERSION "2.6.0";
+  
+  
+CREATE EXTENSION postgis
+  SCHEMA public
+  VERSION "2.3.7";
+  
+ CREATE EXTENSION postgis_sfcgal
+  SCHEMA public
+  VERSION "2.3.7";
+  
+   CREATE EXTENSION postgis_topology
+  SCHEMA topology
+  VERSION "2.3.7";
+
+
+
+	-h 10.48.198.11 -d dbname backup.dump  
+
+---convet dump file custom to plan sql in using pg_restore-------------------
+
+
+pg_restore -f D:\migration_db_backup\auric_21.sql --verbose -F c "D:\migration_db_backup\auric_new_backup.dump"
+-----------------------------------------------------------
+pg_dumpall -h 10.10.77.226 -U postgres --roles-only -f roles.sql  
+
+psql -f roles.sql postgres  
+
+pg_restore -U postgres -d auricdb --exit-on-error --verbose -f "D:\migration_db_backup\auric_new_backup.dump" > D:\migration_db_backup\restore.log 2>&1
+
+pg_restore -U postgres -p 5433 -d auricdb   --no-acl --no-owner   --exit-on-error --verbose   "D:\migration_db_backup\auric_new_backup.dump"  
+
+#################New Server details 
+
+
+
+Server Details:
+ 
+Server IP Address: 10.48.198.11:5533
+Username: Administrator
+Password:  #87eRfuMFehCq22p8r
+Server Infrastructure Location:
+ 
+Cluster : ADC-GCCSAP01(10.5.5.101),  VM Role: DatabaseServer,  VM Name: ESDS-8350-63883-DatabaseServer
+ 
+ VPN Credentials:
+Username: shwetal.walde
+Password: lteIPYrdRgDMuuK
+Remote gateway IP as: 103.249.98.24 , Port: 8443
+ 
+PostgreSQL Credentials:
+Username: postgres
+Password: Admin@123
+Port: 5432
+
+############################################script to check all the database  function tables and sequance list 
+-- 1. Total table count (excluding system catalogs)
+SELECT COUNT(*) AS total_tables
+FROM information_schema.tables
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+  AND table_type = 'BASE TABLE';
+
+-- 2. Total sequence count
+SELECT COUNT(*) AS total_sequences
+FROM information_schema.sequences
+WHERE sequence_schema NOT IN ('pg_catalog', 'information_schema');
+
+-- 3. Total function count (user-defined only)
+SELECT COUNT(*) AS total_functions
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema');
+
+
+
+
+
+=====================check list wise function list =====================================================
+
+
+
+
+SELECT
+    n.nspname AS schema,
+    p.proname AS function_name,
+    pg_get_function_arguments(p.oid) AS arguments,
+    pg_get_function_result(p.oid) AS return_type,
+    pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid
+  )
+ORDER BY n.nspname, p.proname;
+
+
+
+
+
+
+SELECT
+    n.nspname AS schema,
+    p.proname AS aggregate_name,
+    pg_get_function_arguments(p.oid) AS arguments,
+    pg_get_function_result(p.oid) AS return_type
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+JOIN pg_aggregate a ON a.aggfnoid = p.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY n.nspname, p.proname;
+
+
+
+
+
+
+
+
+-- List all user-defined functions (including aggregates)
+SELECT
+    n.nspname AS schema,
+    p.proname AS function_name,
+    pg_get_function_arguments(p.oid) AS arguments,
+    pg_get_function_result(p.oid) AS return_type,
+    CASE
+        WHEN EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid) THEN 'AGGREGATE'
+        ELSE 'FUNCTION'
+    END AS function_type,
+    CASE
+        WHEN EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid) THEN NULL
+        ELSE pg_get_functiondef(p.oid)
+    END AS definition
+FROM pg_proc p
+JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY n.nspname, p.proname;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- 4. Per-table row count (approximate for large tables)
+SELECT 
+    n.nspname AS schema_name,
+    c.relname AS table_name,
+    c.reltuples::BIGINT AS approx_row_count
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'r'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY approx_row_count DESC;
+
+-- Optional: Use COUNT(*) for exact count (can be slow on large tables)
+-- Replace `public` with your schema if needed
+-- SELECT table_schema, table_name, 
+--        (SELECT COUNT(*) FROM information_schema.tables.table_schema || '.' || information_schema.tables.table_name) 
+-- FROM information_schema.tables
+-- WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
+
+
+
+
+
+
+ 

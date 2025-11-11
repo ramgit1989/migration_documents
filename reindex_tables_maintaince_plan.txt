@@ -1,0 +1,373 @@
+-----optimization plan--------
+--SQL Verification (after restore):
+SELECT pg_last_wal_replay_lsn(), pg_last_xact_replay_timestamp(); 
+--Check table bloat):
+SELECT relname, n_live_tup, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 5; 
+
+--SQL (Check replication status):
+SELECT client_addr, state, sync_state, write_lag, flush_lag, replay_lag
+FROM pg_stat_replication; 
+---check max connection usage--------
+SELECT max_conn, used_connections,
+ round((used_connections*100.0/max_conn),2) as usage_pct
+FROM (SELECT setting::int as max_conn FROM pg_settings WHERE
+name='max_connections') t1,
+ (SELECT count(*) as used_connections FROM pg_stat_activity) t2;
+
+
+
+ -- Check active connections
+SELECT datname, usename, state, count(*)
+FROM pg_stat_activity
+GROUP BY datname, usename, state;
+-- Top 5 queries by execution time
+SELECT query, calls, total_exec_time/1000 AS total_seconds
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 5;
+-- Table/index bloat
+SELECT relname, n_live_tup, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables
+ORDER BY n_dead_tup DESC
+LIMIT 10; 
+--------------------ed 
+
+
+SELECT
+  'REINDEX TABLE CONCURRENTLY ' || quote_ident(relname) ||
+  ' /* Size: ' || pg_size_pretty(pg_total_relation_size(C.oid)) || ' */;' AS reindex_command
+FROM pg_class C
+JOIN pg_namespace N ON N.oid = C.relnamespace
+WHERE nspname = 'public'
+  AND relkind = 'r'
+ORDER BY pg_total_relation_size(C.oid) ASC;
+
+--------------------------------
+psql -c "REINDEX TABLE CONCURRENTLY project_tasks_1;"
+
+
+
+
+---------------------You can identify bloated indexes using tools like:-------------------
+
+SELECT pg_class.relname AS index_name,
+       pg_size_pretty(pg_relation_size(pg_class.oid)) AS index_size
+FROM pg_stat_user_indexes
+JOIN pg_class ON pg_stat_user_indexes.indexrelid = pg_class.oid
+ORDER BY pg_relation_size(pg_class.oid) DESC;
+--------------------------------------backup script------------------------------------
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" --verbose  --no-owner --no-acl -F p -f "d:\Contractor_Registry3.0_08092025.sql"
+-------------------------only insert statement script------------------------------
+pg_dump -U postgres --data-only --column-inserts cdms_dev >D:\data_load_script.sql
+---create tables script below  --------------------------------------
+pg_dump -U postgres --schema-only --no-owner --no-privileges cdms > D:\Contractor_Registry_schema_Only_script.sql
+--full dump--- 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F c --verbose --no-owner --no-acl --blobs -p 5432 -f "d:\Contract_db_Daily_back\Contractor_Registry3.14082025.dump"
+--schema_only dump 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F c --verbose --no-owner --no-acl --blobs -p 5432 > "d:\Contract_db_Daily_back\Contractor_Registry_schema_Only_script_19082025.sql" 
+
+
+
+
+
+--------------------------backup cdms testing type -----------------------
+
+============before restore the backup check the list of command 
+pg_restore --list "D:/Contractor_Registry_full_script_16092025.dump"  
+
+pg_restore -p 5432 -U postgres -d "cdms3.0_latest" --verbose --no-owner --no-acl --jobs=4 "D:/Contractor_Registry_full_script_16092025.dump"
+
+pg_restore -p 5432 -U postgres  -d "cdms3.0_latest" --verbose --no-owner --no-acl --clean  --if-exists --schema-only  --jobs=4  "D:/Contractor_Registry_full_script_19092025.dump"
+
+##restore it all in production 
+
+pg_restore  -U postgres -d cdmsdmF -p 5432 --schema-only --verbose "D:\Contractor_Registry_schema_Only_script_09092025.sql"
+
+--pg_restore  -U postgres -d cdmsdm3 -p 5432 --schema-only --verbose "d:\Contract_db_Daily_back\Contractor_Registry_schema_Only_script_19082025.sql"
+
+
+---------------------only cdms testing 
+
+---parallel formate backup is possible in dir formate 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F d --verbose --no-owner --no-acl --blobs -p 5432 -j 4 -f "d:\Contract_db_Daily_back\Dirformat"
+
+--------parallel restore  backup in dir formate------------
+pg_restore  -U postgres -d cdms_df -F d --verbose -j 4 "d:\Contract_db_Daily_back\Dirformat"
+
+pg_dump -h localhost -p 5432 -d  RegistrationLIA_module -U postgres -s -F p -E UTF-8 -f 'd:\pg_schema.sql'
+
+
+dump.formate 
+pg_dump -h 192.168.10.205 -U cregistry -d "Contractor_Registry3.0" -F c --verbose --no-owner --no-acl --blobs -p 5432 -f "d:\Contract_db_Daily_back\Contractor_Registry3.0_29072025.dump"
+
+check list of large dump
+pg_restore -l Contractor_Registry3.0_20250729.dump
+--check dry-run
+pg_restore -U postgres -F c --list "d:\Contract_db_Daily_back\Contractor_Registry3.0_29072025.dump"
+--then run final-run
+pg_restore -U postgres -p 5432 --no-owner --no-acl --verbose -j 4 -d cdms3.0 "d:\Contract_db_Daily_back\Contractor_Registry3.0_29072025.dump"
+
+
+--------check size of databas before for matching the size of existing db
+SELECT pg_size_pretty(pg_database_size('Contractor_Registry3.0'));
+
+
+-------------------check and find grep command in postgres in windows
+pg_controldata -D D:\pg_data\data | grep 'Minimum recovery ending location'
+'grep' is not recognized as an internal or external command,
+operable program or batch file.
+
+C:\Users\ram.mishra>pg_controldata -D D:\pg_data\data | findstr "Minimum recovery ending location"
+Latest checkpoint location:           13/EAB05420
+Latest checkpoint's REDO location:    13/EAB05420
+Minimum recovery ending location:     0/0
+Min recovery ending loc's timeline:   0
+Backup start location:                0/0
+Backup end location:                  0/0
+
+
+--------------------using this view all bloat finding index and tables list  and then 
+CREATE OR REPLACE VIEW pg_bloat_info AS
+WITH constants AS (
+    SELECT
+        current_setting('block_size')::numeric AS bs,
+        23 AS hdr,
+        4 AS ma
+),
+bloat_info AS (
+    SELECT
+        ma,
+        bs,
+        schemaname,
+        tablename,
+        (datawidth + (hdr + ma - (CASE WHEN hdr%ma = 0 THEN ma ELSE hdr%ma END)))::numeric AS datahdr,
+        (maxfracsum * (nullhdr + ma - (CASE WHEN nullhdr%ma = 0 THEN ma ELSE nullhdr%ma END))) AS nullhdr2
+    FROM (
+        SELECT
+            schemaname,
+            tablename,
+            hdr,
+            ma,
+            bs,
+            SUM((1 - null_frac) * avg_width) AS datawidth,
+            MAX(null_frac) AS maxfracsum,
+            hdr + (
+                SELECT 1 + count(*) / 8
+                FROM pg_stats s2
+                WHERE null_frac != 0
+                AND s2.schemaname = s.schemaname
+                AND s2.tablename = s.tablename
+            ) AS nullhdr
+        FROM pg_stats AS s, constants
+        GROUP BY 1,2,3,4,5
+    ) AS foo
+),
+table_bloat AS (
+    SELECT
+        schemaname,
+        tablename,
+        cc.relpages,
+        bs,
+        CEIL((cc.reltuples * ((datahdr + ma - (CASE WHEN datahdr%ma = 0 THEN ma ELSE datahdr%ma END)) + nullhdr2 + 4)) / (bs - 20::float)) AS otta
+    FROM bloat_info
+    INNER JOIN pg_class cc ON cc.relname = bloat_info.tablename
+    INNER JOIN pg_namespace nn
+        ON cc.relnamespace = nn.oid
+        AND nn.nspname = bloat_info.schemaname
+        AND nn.nspname NOT IN ('information_schema','pg_catalog')
+),
+index_bloat AS (
+    SELECT 
+        schemaname,
+        tablename,
+        bs,
+        COALESCE(c2.relname,'?') AS iname,
+        COALESCE(c2.reltuples,0) AS ituples,
+        COALESCE(c2.relpages,0) AS ipages,
+        COALESCE(CEIL((c2.reltuples * (datahdr - 12)) / (bs - 20::float)), 0) AS iotta
+    FROM bloat_info
+    INNER JOIN pg_class AS cc
+        ON cc.relname = bloat_info.tablename
+    INNER JOIN pg_namespace AS nn
+        ON cc.relnamespace = nn.oid
+        AND nn.nspname = bloat_info.schemaname
+        AND nn.nspname NOT IN ('information_schema', 'pg_catalog')
+    INNER JOIN pg_index AS i
+        ON indrelid = cc.oid
+    INNER JOIN pg_class AS c2
+        ON c2.oid = i.indexrelid
+)
+SELECT
+    type,
+    schemaname,
+    object_name,
+    bloat,
+    pg_size_pretty(raw_waste) AS waste
+FROM (
+    SELECT
+        'table' AS type,
+        schemaname,
+        tablename AS object_name,
+        ROUND(CASE WHEN otta = 0 THEN 0.0 ELSE table_bloat.relpages/otta::numeric END, 1) AS bloat,
+        CASE WHEN relpages < otta THEN '0' ELSE (bs * (table_bloat.relpages-otta)::bigint)::bigint END AS raw_waste
+    FROM table_bloat
+    UNION
+    SELECT
+        'index' AS type,
+        schemaname,
+        tablename || '::' || iname as object_name,
+        ROUND(CASE WHEN iotta = 0 OR ipages = 0 THEN 0.0 ELSE ipages / iotta::numeric END, 1) AS bloat,
+        CASE WHEN ipages < iotta THEN '0' ELSE (bs*(ipages-iotta))::bigint END AS raw_waste
+    FROM index_bloat
+) AS bloat_summary
+ORDER BY raw_waste DESC, bloat DESC;
+
+
+SELECT * FROM pg_bloat_info;
+
+
+VACUUM (FULL, ANALYZE, VERBOSE) public.test_table;
+VACUUM (FULL, ANALYZE, VERBOSE) public.withidx;
+VACUUM (FULL, ANALYZE, VERBOSE) public.noidx;
+VACUUM (FULL, ANALYZE, VERBOSE) public.f;
+VACUUM (FULL, ANALYZE, VERBOSE) public.d;
+
+------------------------------end ----------------------------------------------
+-----readonly user_script------- 
+CREATE USER readonly_user WITH PASSWORD 'cdms@123';
+-- Revoke write privileges on existing tables
+REVOKE INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public FROM readonly_user;
+
+-- Revoke ability to create objects
+REVOKE CREATE ON SCHEMA public FROM readonly_user;
+
+-- Revoke write privileges on future tables
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+REVOKE INSERT, UPDATE, DELETE ON TABLES FROM readonly_user;
+
+
+GRANT CONNECT ON DATABASE postgres TO readonly_user;
+GRANT USAGE ON SCHEMA public TO readonly_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+GRANT SELECT ON TABLES TO readonly_user;
+---check previlage 
+SELECT grantee, privilege_type
+FROM information_schema.schema_privileges
+WHERE grantee = 'readonly_user' AND schema_name = 'public';
+-------------------------check lock any table and block the database -------------------
+SELECT
+
+    l.locktype,
+
+    l.relation::regclass AS locked_relation,
+
+    l.page,
+
+    l.tuple,
+
+    l.virtualtransaction,
+
+    l.pid,
+
+    l.mode,
+
+    l.granted
+
+FROM pg_locks l
+
+LEFT JOIN pg_class c ON l.relation = c.oid
+
+WHERE l.relation IS NOT NULL;
+ 
+---SELECT pg_cancel_backend(<pid>);
+ 
+---SELECT pg_terminate_backend(<pid>);
+
+ 
+
+
+-----------------------------------------------check db size with scripts -----------------------------------------
+-- Database sizes
+SELECT 
+    datname,
+    pg_size_pretty(pg_database_size(datname)) as size,
+    pg_database_size(datname) as size_bytes
+FROM pg_database 
+ORDER BY pg_database_size(datname) DESC;
+
+
+
+-- Table sizes in current database
+SELECT 
+    schemaname,
+    tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size,
+    pg_total_relation_size(schemaname||'.'||tablename) as size_bytes
+FROM pg_tables 
+ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC 
+LIMIT 20;
+
+
+
+
+
+-- Tables without primary keys
+SELECT schemaname, tablename 
+FROM pg_tables t
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_indexes i 
+    WHERE i.tablename = t.tablename 
+    AND i.schemaname = t.schemaname
+);
+
+-- Unused indexes
+-- Corrected unused indexes query
+SELECT 
+    schemaname,
+    relname as tablename, 
+    indexrelname as indexname,
+    idx_scan,
+    pg_size_pretty(pg_relation_size(indexrelid)) as index_size
+FROM pg_stat_user_indexes 
+WHERE idx_scan = 0
+ORDER BY pg_relation_size(indexrelid) DESC;
+
+
+
+
+
+-- Table bloat estimation
+-- Corrected table bloat estimation
+SELECT 
+    schemaname,
+    relname as tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname)) as size,
+    n_dead_tup,
+    n_live_tup,
+    ROUND(n_dead_tup::numeric / NULLIF(n_live_tup + n_dead_tup, 0) * 100, 2) as bloat_pct
+FROM pg_stat_user_tables 
+WHERE n_dead_tup > 1000
+ORDER BY n_dead_tup DESC;
+
+
+
+
+-- Bloat with table sizes
+SELECT 
+    t.relname,
+    pg_size_pretty(pg_relation_size(t.oid)) as table_size,
+    s.n_dead_tup,
+    s.n_live_tup
+FROM pg_class t
+JOIN pg_stat_user_tables s ON t.relname = s.relname
+WHERE s.n_dead_tup > 1000
+ORDER BY s.n_dead_tup DESC;
+
+----------------read only user create--------------
+ create  user ram_read in role pg_read_all_data, pg_monitor;
+ \password ram_read
+ -----------------------end------------------
