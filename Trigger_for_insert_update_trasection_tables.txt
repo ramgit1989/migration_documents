@@ -1,0 +1,280 @@
+
+
+---first create table log table 
+CREATE TABLE public.t_cdms_li_address_log (
+  log_id SERIAL PRIMARY KEY,
+  operation TEXT,
+  changed_at TIMESTAMP DEFAULT now(),
+  -- Original columns
+  address_id bigint,
+  created_by bigint,
+  pc_state_id bigint,
+  pc_district_id bigint,
+  pc_block_id bigint,
+  pc_block character varying(50),
+  pc_gp_id bigint,
+  pc_gp character varying(50),
+  pc_village_id bigint,
+  pc_village character varying(50),
+  pc_pin integer,
+  pr_state_id bigint,
+  pr_district_id bigint,
+  pr_block_id bigint,
+  pr_block character varying(50),
+  pr_gp_id bigint,
+  pr_gp character varying(50),
+  pr_village_id bigint,
+  pr_village character varying(50),
+  pr_pin integer,
+  bit_same_as boolean,
+  status boolean,
+  validation text,
+  message text,
+  basic_information_license_id bigint,
+  pc_police_station character varying(50),
+  pc_post_office character varying(50),
+  pc_address_proof_id integer,
+  pc_address_proof_file character varying(200),
+  pr_police_station character varying(50),
+  pr_post_office character varying(50),
+  pr_address_proof_id integer,
+  pr_address_proof_file character varying(200),
+  dsc_status character varying(5),
+  seek_dsc_status character varying(5),
+  updated_by bigint,
+  created_date timestamp,
+  updated_date timestamp,
+  pc_house_no character varying(100),
+  pc_street_name character varying(100),
+  pr_house_no character varying(100),
+  pr_street_name character varying(100)
+);
+
+
+CREATE TABLE public.t_cdm_li_confirmation_log (
+  log_id SERIAL PRIMARY KEY,
+  operation TEXT,
+  changed_at TIMESTAMP DEFAULT now(),
+  -- Original columns
+  confirmation_id bigint,
+  user_id bigint,
+  csf_code character varying(60),
+  registration_number character varying(60),
+  created_date timestamp,
+  created_by bigint,
+  updated_date timestamp,
+  status character varying,
+  updated_by bigint,
+  request_type character varying(60),
+  order_no character varying(60),
+  committee_doc character varying(1000),
+  forward_rdqp boolean,
+  basic_information_license_id bigint,
+  cancellation_forward_dt date,
+  csf_rcv_date date
+);
+
+
+
+---create trigger for tables
+
+-- For t_cdms_li_address
+CREATE TRIGGER trg_log_cdms_li_address
+AFTER INSERT OR UPDATE ON public.t_cdms_li_address
+FOR EACH ROW EXECUTE FUNCTION log_table_changes();
+
+-- For t_cdm_li_confirmation
+CREATE TRIGGER trg_log_cdm_li_confirmation
+AFTER INSERT OR UPDATE ON public.t_cdm_li_confirmation
+FOR EACH ROW EXECUTE FUNCTION log_table_changes();
+
+---create function for log_table_changes----------
+CREATE OR REPLACE FUNCTION log_table_changes() RETURNS trigger AS $$
+DECLARE
+  log_table TEXT := TG_TABLE_NAME || '_log';
+  col_list TEXT;
+  val_list TEXT;
+BEGIN
+  -- Build column and value list dynamically
+  SELECT
+    string_agg(quote_ident(column_name), ', '),
+    string_agg('$1.' || quote_ident(column_name), ', ')
+  INTO col_list, val_list
+  FROM information_schema.columns
+  WHERE table_name = log_table
+    AND column_name NOT IN ('log_id', 'operation', 'changed_at');
+
+  -- Execute dynamic insert with parameter binding
+  EXECUTE format(
+    'INSERT INTO %I (%s, operation, changed_at) VALUES (%s, %L, now())',
+    log_table,
+    col_list,
+    val_list,
+    TG_OP
+  )
+  USING NEW;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+################################################################automatic create log table and function of all tables-------------------------
+
+CREATE OR REPLACE FUNCTION log_table_changes() RETURNS trigger AS $$
+DECLARE
+  log_table TEXT := TG_TABLE_NAME || '_log';
+  col_list TEXT;
+  val_list TEXT;
+BEGIN
+  -- Build column and value list from the source table
+  SELECT
+    string_agg(quote_ident(column_name), ', '),
+    string_agg('$1.' || quote_ident(column_name), ', ')
+  INTO col_list, val_list
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = TG_TABLE_NAME
+    AND column_name NOT IN ('log_id', 'operation', 'changed_at');
+
+  -- INSERT: log NEW values
+  IF TG_OP = 'INSERT' THEN
+    EXECUTE format(
+      'INSERT INTO %I (%s, operation, changed_at) VALUES (%s, %L, now())',
+      log_table,
+      col_list,
+      val_list,
+      TG_OP
+    )
+    USING NEW;
+
+  -- UPDATE: log OLD values
+  ELSIF TG_OP = 'UPDATE' THEN
+    EXECUTE format(
+      'INSERT INTO %I (%s, operation, changed_at) VALUES (%s, %L, now())',
+      log_table,
+      col_list,
+      val_list,
+      TG_OP
+    )
+    USING OLD;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+DO $$
+DECLARE
+  tbl RECORD;
+  col RECORD;
+BEGIN
+  FOR tbl IN
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('t_cdms_li_basic_information_license',t_cdms_li_basic_information_license_final')  -- Add more tables here
+  LOOP
+    -- Create log table
+    EXECUTE format('CREATE TABLE IF NOT EXISTS public.%I_log (
+      log_id SERIAL PRIMARY KEY,
+      operation TEXT,
+      changed_at TIMESTAMP DEFAULT now()
+    )', tbl.table_name);
+
+    -- Add columns to log table
+    FOR col IN
+      SELECT column_name, data_type, character_maximum_length
+      FROM information_schema.columns
+      WHERE table_name = tbl.table_name
+        AND column_name NOT IN ('log_id', 'operation', 'changed_at')
+    LOOP
+      EXECUTE format(
+        'ALTER TABLE public.%I_log ADD COLUMN IF NOT EXISTS %I %s',
+        tbl.table_name,
+        col.column_name,
+      CASE
+  WHEN col.data_type = 'character varying' AND col.character_maximum_length IS NOT NULL
+    THEN format('VARCHAR(%s)', col.character_maximum_length)
+  WHEN col.data_type = 'character varying' THEN 'TEXT'
+  ELSE col.data_type
+END
+      );
+    END LOOP;
+
+    -- Create trigger
+    EXECUTE format(
+  'DROP TRIGGER IF EXISTS trg_log_%I ON public.%I;
+   CREATE TRIGGER trg_log_%I
+   AFTER INSERT OR UPDATE ON public.%I
+   FOR EACH ROW EXECUTE FUNCTION log_table_changes()',
+  tbl.table_name, tbl.table_name, tbl.table_name, tbl.table_name
+);
+	
+  END LOOP;
+END;
+$$;
+
+
+
+-----------------------------------------this trigger for capture old and new value with json value----------------------------
+CREATE OR REPLACE FUNCTION log_table_changes() RETURNS trigger AS $$
+DECLARE
+  log_table TEXT := TG_TABLE_NAME || '_log';
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    EXECUTE format(
+      'INSERT INTO %I (operation, changed_at, old_data, new_data) VALUES (%L, now(), to_jsonb($1), to_jsonb($2))',
+      log_table,
+      TG_OP
+    )
+    USING OLD, NEW;
+
+  ELSIF TG_OP = 'INSERT' THEN
+    EXECUTE format(
+      'INSERT INTO %I (operation, changed_at, new_data) VALUES (%L, now(), to_jsonb($1))',
+      log_table,
+      TG_OP
+    )
+    USING NEW;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+DO $$
+DECLARE
+  tbl RECORD;
+BEGIN
+  FOR tbl IN
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('t_cdms_li_address', 't_cdm_li_confirmation','t_cdm_li_basic_info_licensee')  -- Add more tables here
+  LOOP
+    -- Create log table with JSON columns
+    EXECUTE format('CREATE TABLE IF NOT EXISTS public.%I_log (
+      log_id SERIAL PRIMARY KEY,
+      operation TEXT,
+      changed_at TIMESTAMP DEFAULT now(),
+      old_data JSONB,
+      new_data JSONB
+    )', tbl.table_name);
+
+    -- Drop and recreate trigger
+    EXECUTE format(
+      'DROP TRIGGER IF EXISTS trg_log_%I ON public.%I;
+       CREATE TRIGGER trg_log_%I
+       AFTER INSERT OR UPDATE ON public.%I
+       FOR EACH ROW EXECUTE FUNCTION log_table_changes()',
+      tbl.table_name, tbl.table_name,
+      tbl.table_name, tbl.table_name
+    );
+  END LOOP;
+END;
+$$;
+
